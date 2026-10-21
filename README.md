@@ -2,7 +2,7 @@
 
 针对 **Plain Craft Launcher 2（正式版 2.99.0.0）** 的 IL 级二进制补丁器，解除开源版中被作者主动限制的 Minecraft 原版下载功能，并注入来源说明与首次启动公告。
 
-> ⚠️ **免责声明**：本工具仅供学习交流使用。PCL 作者出于合规考虑在开源版中加入了该限制（`RestrictMcDownload`），使用者请自行承担使用责任，并遵守[《PCL 分发有限许可》](https://shimo.im/docs/rGrd8pY8xWkt6ryW#anchor-X0bo)的情况下使用GPL-3.0许可证。使用补丁版遇到的任何 BUG **请勿反馈至官方仓库**。本项目的许可证仅适用于补丁器自身的源代码，与 PCL2 主程序无关。使用者仍需遵守[《PCL 分发有限许可》](https://shimo.im/docs/rGrd8pY8xWkt6ryW#anchor-X0bo)。
+> ⚠️ **免责声明**：本工具仅供学习交流使用。PCL 作者出于合规考虑在开源版中加入了该限制（`RestrictMcDownload`），使用者请自行承担使用责任且仍需遵守[《PCL 分发有限许可》](https://shimo.im/docs/rGrd8pY8xWkt6ryW#anchor-X0bo)；本项目在遵守[《PCL 分发有限许可》](https://shimo.im/docs/rGrd8pY8xWkt6ryW#anchor-X0bo)的情况下使用GPL-3.0许可证。使用补丁版遇到的任何 BUG **请勿反馈至官方仓库**。本项目的许可证仅适用于补丁器自身的源代码，与 PCL2 主程序无关。
 
 ## 使用方法（小白向）
 
