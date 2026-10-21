@@ -145,6 +145,13 @@ static class PatchRunner
         if (!File.Exists(path)) Fail("文件不存在：" + path);
         Log("目标文件：" + path);
 
+        // 重置静态状态，避免跨次运行污染（bridgeType/touched 等静态字段在第一次补丁后仍持有旧模块引用）
+        mod = null;
+        touched.Clear();
+        bridgeType = null;
+        bridgeLicClick = null;
+        bridgeAnnounce = null;
+
         mod = dnlib.DotNet.ModuleDefMD.Load(File.ReadAllBytes(path));
         string asmName = mod.Assembly != null ? mod.Assembly.Name.String : "";
         string ver = mod.Assembly != null ? mod.Assembly.Version.ToString() : "";
