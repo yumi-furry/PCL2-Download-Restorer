@@ -21,7 +21,7 @@
 
 ## 校验与信任
 
-发布版 `Releases\PCL2一键补丁.exe` 的哈希如下（同目录附 `SHA256SUMS.txt`）：
+发布版 exe 的哈希如下（Releases 目录附 `SHA256SUMS.txt`；GitHub Release 附件名因平台 ASCII 规范化显示为 `PCL2-Patch.exe`，与本目录 `PCL2一键补丁.exe` 为同一文件、哈希相同）：
 
 | 算法 | 值 |
 |---|---|
