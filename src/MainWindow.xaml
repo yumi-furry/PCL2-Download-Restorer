@@ -1,0 +1,87 @@
+<Window x:Class="MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:"
+        Title="PCL 下载补丁" Height="560" Width="700"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ResizeMode="CanMinimize" WindowStartupLocation="CenterScreen">
+    <Border x:Name="BorderForm" CornerRadius="6" Background="White" Margin="0">
+        <Border.Clip>
+            <RectangleGeometry RadiusX="6" RadiusY="6" Rect="0,0,700,560" x:Name="RectForm" />
+        </Border.Clip>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="48" />
+                <RowDefinition />
+            </Grid.RowDefinitions>
+
+            <!-- 标题栏（照搬 PCL2 PanTitle：蓝色渐变 + 白字 + 圆形按钮） -->
+            <Grid x:Name="PanTitle" Grid.Row="0" MouseLeftButtonDown="PanTitle_MouseLeftButtonDown">
+                <Grid.Background>
+                    <LinearGradientBrush EndPoint="1,0" StartPoint="0,0">
+                        <GradientStop Color="#4890f5" Offset="0"/>
+                    </LinearGradientBrush>
+                </Grid.Background>
+                <TextBlock Text="PCL 下载补丁" Foreground="White" FontSize="16" FontWeight="Bold"
+                           VerticalAlignment="Center" Margin="16,0,0,0" />
+                <local:MyIconButton x:Name="BtnClose" HorizontalAlignment="Right" Height="28" VerticalAlignment="Center" Width="28" Margin="0,0,12,0" Theme="White"
+                                   LogoScale="0.72" Logo="F1 M2,0 L0,2 8,10 0,18 2,20 10,12 18,20 20,18 12,10 20,2 18,0 10,8 2,0Z" />
+                <local:MyIconButton x:Name="BtnMin" HorizontalAlignment="Right" Height="28" VerticalAlignment="Center" Width="28" Margin="0,0,44,0" Theme="White"
+                                   LogoScale="0.72" Logo="F1 M0,0 h15 v2 h-15 v-2 Z" />
+            </Grid>
+
+            <!-- 内容区 -->
+            <Grid Grid.Row="1" Margin="20,18,20,18">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- 路径输入 -->
+                <StackPanel Grid.Row="0">
+                    <TextBlock Text="启动器主程序路径" Foreground="{StaticResource ColorBrush1}" FontSize="13" Margin="0,0,0,6" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" BorderThickness="1" BorderBrush="{StaticResource ColorBrush5}" Background="{StaticResource ColorBrushHalfWhite}" CornerRadius="3" Height="30">
+                            <TextBox x:Name="TxtPath" BorderThickness="0" Background="Transparent" Foreground="{StaticResource ColorBrush1}"
+                                     FontSize="13" VerticalContentAlignment="Center" Margin="8,0,8,0" />
+                        </Border>
+                        <local:MyButton Grid.Column="1" x:Name="BtnBrowse" Text="浏览…" Width="80" Height="30" Margin="8,0,0,0" />
+                    </Grid>
+                </StackPanel>
+
+                <!-- 识别徽章 -->
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,12,0,0">
+                    <Border x:Name="Badge" CornerRadius="10" Background="{StaticResource ColorBrush6}" Padding="10,3,10,3" Visibility="Collapsed">
+                        <TextBlock x:Name="BadgeText" Foreground="{StaticResource ColorBrush2}" FontSize="12" FontWeight="Bold" />
+                    </Border>
+                    <TextBlock x:Name="LabHint" Foreground="{StaticResource ColorBrushGray3}" FontSize="12" VerticalAlignment="Center" Margin="10,0,0,0"
+                               Text="可拖入 exe 或快捷方式 .lnk" />
+                </StackPanel>
+
+                <!-- 按钮 -->
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,16,0,0">
+                    <local:MyButton x:Name="BtnPatch" Text="一键补丁" Width="140" Height="36" ColorType="Highlight" />
+                    <local:MyButton x:Name="BtnRestore" Text="一键还原" Width="140" Height="36" Margin="12,0,0,0" />
+                </StackPanel>
+
+                <!-- 日志区 -->
+                <Border Grid.Row="3" Margin="0,16,0,0" BorderThickness="1" BorderBrush="{StaticResource ColorBrushGray6}" CornerRadius="3" Background="{StaticResource ColorBrushGray8}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="10,8">
+                        <TextBlock x:Name="LabLog" Foreground="{StaticResource ColorBrush1}" FontSize="12" TextWrapping="Wrap" />
+                    </ScrollViewer>
+                </Border>
+
+                <!-- 底部说明 -->
+                <TextBlock Grid.Row="4" Foreground="{StaticResource ColorBrushGray3}" FontSize="11" Margin="0,10,0,0" TextWrapping="Wrap"
+                           Text="补丁器仅供学习交流使用，请遵守《PCL 分发有限许可》。使用补丁版遇到的 BUG 请勿反馈至官方仓库。" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

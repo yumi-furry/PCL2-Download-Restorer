@@ -1,135 +1,122 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Management;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
-using System.Windows.Forms;
+using System.Windows;
 using dnlib.DotNet;
 using dnlib.DotNet.Emit;
 
-static class Program
+// ============ 目标识别（轻量嗅探，精细判定由各补丁引擎完成） ============
+static class TargetDetect
 {
-    [STAThread]
-    static void Main()
+    public enum Kind { Unknown, Pcl2, PclCE, Hmcl }
+
+    public class Info
     {
-        // dnlib 嵌入资源，解析时从资源加载（必须在任何 dnlib 类型被 JIT 前注册）
-        AppDomain.CurrentDomain.AssemblyResolve += (s, e) =>
+        public Kind Kind = Kind.Unknown;
+        public string AsmName = "";
+        public string Version = "";
+        public string Desc = "未识别";
+    }
+
+    public static Info Identify(byte[] bytes)
+    {
+        var info = new Info();
+        // HMCL：ZIP（可带 EXE 前缀）内含 hmcl 条目
+        if (LooksLikeHmcl(bytes))
         {
-            if (!e.Name.StartsWith("dnlib,", StringComparison.Ordinal)) return null;
-            var self = Assembly.GetExecutingAssembly();
-            using (var st = self.GetManifestResourceStream("dnlib.dll"))
+            info.Kind = Kind.Hmcl;
+            info.Desc = "HMCL（Java 启动器）";
+            return info;
+        }
+        // .NET 程序集
+        try
+        {
+            using (var m = dnlib.DotNet.ModuleDefMD.Load(bytes))
             {
-                if (st == null) return null;
-                var buf = new byte[st.Length];
-                st.Read(buf, 0, buf.Length);
-                return Assembly.Load(buf);
+                string asm = m.Assembly != null ? m.Assembly.Name.String : "";
+                string ver = m.Assembly != null ? m.Assembly.Version.ToString() : "";
+                info.AsmName = asm;
+                info.Version = ver;
+                bool ce = false, pcl = false;
+                foreach (var t in m.GetTypes())
+                {
+                    if (t.FullName == "PCL.RestrictedFeaturePolicy") ce = true;
+                    else if (t.FullName == "PCL.ModModpack") pcl = true;
+                }
+                if (ce)
+                {
+                    info.Kind = Kind.PclCE;
+                    info.Desc = "PCL-CE（托管程序集）";
+                    return info;
+                }
+                if (asm == "Plain Craft Launcher 2" || pcl)
+                {
+                    info.Kind = Kind.Pcl2;
+                    info.Desc = "官方 PCL " + ver + (ver == "2.99.0.0" ? "（锚点模式）" : "（指纹模式）");
+                    return info;
+                }
             }
-        };
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-        Application.Run(new MainForm());
-    }
-}
-
-class MainForm : Form
-{
-    TextBox txtPath;
-    TextBox txtLog;
-    Button btnPatch;
-    Button btnRestore;
-
-    public MainForm()
-    {
-        Text = "PCL2 下载功能一键补丁";
-        Size = new Size(640, 460);
-        StartPosition = FormStartPosition.CenterScreen;
-        Font = new Font("Microsoft YaHei UI", 9F);
-
-        var lab1 = new Label { Text = "PCL2 主程序路径（可带引号粘贴）：", Left = 12, Top = 14, Width = 300, AutoSize = false };
-        txtPath = new TextBox { Left = 12, Top = 36, Width = 500, Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top };
-        var btnBrowse = new Button { Text = "浏览…", Left = 520, Top = 34, Width = 90, Anchor = AnchorStyles.Right | AnchorStyles.Top };
-        btnBrowse.Click += (s, e) =>
+        }
+        catch { }
+        // PCL-CE 的 .NET 单文件容器（native PE 壳，dnlib 无法直接加载）
+        if (bytes.Length > 2 && bytes[0] == 'M' && bytes[1] == 'Z' && CecilPatcher.LooksLikeBundle(bytes))
         {
-            using (var dlg = new OpenFileDialog { Filter = "PCL2 主程序|*.exe", Title = "选择 Plain Craft Launcher 2.exe" })
-                if (dlg.ShowDialog() == DialogResult.OK) txtPath.Text = dlg.FileName;
-        };
-        btnPatch = new Button { Text = "一键补丁", Left = 12, Top = 70, Width = 294, Height = 34, Anchor = AnchorStyles.Left | AnchorStyles.Top, Font = new Font(Font, FontStyle.Bold) };
-        btnPatch.Click += BtnPatch_Click;
-        btnRestore = new Button { Text = "一键还原", Left = 316, Top = 70, Width = 294, Height = 34, Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top, Font = new Font(Font, FontStyle.Bold) };
-        btnRestore.Click += BtnRestore_Click;
-        txtLog = new TextBox { Left = 12, Top = 114, Width = 598, Height = 270, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top | AnchorStyles.Bottom, Font = new Font("Consolas", 9F) };
-        var lab2 = new Label { Text = "说明：补丁前自动备份原文件为 同名.exe.bak；仅适配 PCL2 2.99.0.0，其它版本会被安全检查拦截且不会写坏文件。", Left = 12, Top = 392, Width = 598, Height = 32, Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom, ForeColor = Color.Gray };
-
-        Controls.Add(lab1); Controls.Add(txtPath); Controls.Add(btnBrowse);
-        Controls.Add(btnPatch); Controls.Add(btnRestore); Controls.Add(txtLog); Controls.Add(lab2);
-
-        string def = @"D:\Program Files\PCL2\Plain Craft Launcher 2.exe";
-        if (File.Exists(def)) txtPath.Text = def;
+            info.Kind = Kind.PclCE;
+            info.Desc = "PCL-CE（.NET 单文件容器）";
+            return info;
+        }
+        return info;
     }
 
-    void Log(string s)
+    static bool LooksLikeHmcl(byte[] b)
     {
-        txtLog.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + s + Environment.NewLine);
-    }
-
-    void BtnPatch_Click(object sender, EventArgs e)
-    {
-        txtLog.Clear();
-        btnPatch.Enabled = false;
-        Cursor = Cursors.WaitCursor;
         try
         {
-            string path = txtPath.Text.Trim().Trim('"', '\'');
-            PatchRunner.Run(path, Log, msg => MessageBox.Show(this, msg, "需要确认", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes);
-            Log("全部完成！可以启动 PCL2 验证下载功能。");
+            int end = -1;
+            for (int i = b.Length - 22; i >= Math.Max(0, b.Length - 65557); i--)
+                if (BitConverter.ToUInt32(b, i) == 0x06054b50 && i + 22 + BitConverter.ToUInt16(b, i + 20) == b.Length) { end = i; break; }
+            if (end < 0) return false;
+            uint cdSize = BitConverter.ToUInt32(b, end + 12), cdOffset = BitConverter.ToUInt32(b, end + 16);
+            long prefix = (long)end - cdSize - cdOffset;
+            if (prefix < 0) return false;
+            using (var zip = new ZipArchive(new MemoryStream(b, (int)prefix, b.Length - (int)prefix), ZipArchiveMode.Read))
+                return zip.GetEntry("org/jackhuang/hmcl/Main.class") != null
+                    || zip.GetEntry("org/jackhuang/hmcl/util/RegionUtils.class") != null;
         }
-        catch (Exception ex)
-        {
-            string msg;
-            try { msg = ex.Message; } catch { msg = ex.GetType().Name; }
-            Log("失败：" + msg);
-            Log("未写入任何内容，原文件未受影响。");
-            MessageBox.Show(this, "补丁失败：" + msg, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-        finally
-        {
-            btnPatch.Enabled = true;
-            Cursor = Cursors.Default;
-        }
+        catch { return false; }
     }
 
-    void BtnRestore_Click(object sender, EventArgs e)
+    // 解析 .lnk 快捷方式目标（经 WScript.Shell COM 晚绑定，避免额外引用）
+    public static string ResolveShortcut(string lnkPath)
     {
-        txtLog.Clear();
-        btnPatch.Enabled = false;
-        btnRestore.Enabled = false;
-        Cursor = Cursors.WaitCursor;
+        object shell = null, sc = null;
         try
         {
-            string path = txtPath.Text.Trim().Trim('"', '\'');
-            PatchRunner.Restore(path, Log, msg => MessageBox.Show(this, msg, "需要确认", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes);
-            Log("还原完成！PCL2 已恢复为官方原版。");
+            Type t = Type.GetTypeFromProgID("WScript.Shell");
+            if (t == null) return null;
+            shell = Activator.CreateInstance(t);
+            sc = t.InvokeMember("CreateShortcut", BindingFlags.Public | BindingFlags.InvokeMethod, null, shell, new object[] { lnkPath });
+            string target = t.InvokeMember("TargetPath", BindingFlags.Public | BindingFlags.GetProperty, null, sc, null) as string;
+            return string.IsNullOrEmpty(target) ? null : target;
         }
-        catch (Exception ex)
-        {
-            string msg;
-            try { msg = ex.Message; } catch { msg = ex.GetType().Name; }
-            Log("失败：" + msg);
-            MessageBox.Show(this, "还原失败：" + msg, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
+        catch { return null; }
         finally
         {
-            btnPatch.Enabled = true;
-            btnRestore.Enabled = true;
-            Cursor = Cursors.Default;
+            if (sc != null) try { Marshal.FinalReleaseComObject(sc); } catch { }
+            if (shell != null) try { Marshal.FinalReleaseComObject(shell); } catch { }
         }
     }
 }
 
-// ============ 补丁核心（与验证过的控制台版逻辑一致） ============
+// ============ 补丁核心（PCL2 2.99 锚点补丁 A~G + 多启动器分派） ============
 static class PatchRunner
 {
     static dnlib.DotNet.ModuleDefMD mod;
@@ -145,6 +132,50 @@ static class PatchRunner
         if (!File.Exists(path)) Fail("文件不存在：" + path);
         Log("目标文件：" + path);
 
+        byte[] original = File.ReadAllBytes(path);
+        var info = TargetDetect.Identify(original);
+        Log("识别结果：" + info.Desc);
+
+        byte[] patched = null;
+        if (info.Kind == TargetDetect.Kind.Pcl2 && info.Version == "2.99.0.0")
+        {
+            // 优先：程序集名 + 版本号 + 锚点硬断言（A~G，含 F/G 注入）
+            try
+            {
+                patched = AnchorPatch(original);
+                Log("锚点补丁完成（内存重写成功，尚未落盘）。");
+            }
+            catch (Exception ex)
+            {
+                Log("锚点补丁未通过安全检查：" + ex.Message);
+                Log("回退：尝试方法指纹回填（仅恢复下载功能，不含 F/G）……");
+                patched = null;
+            }
+        }
+        else if (info.Kind == TargetDetect.Kind.Pcl2)
+        {
+            Log("官方 PCL 非 2.99.0.0，直接使用方法指纹回填（无版本白名单；不含 F/G）。");
+        }
+
+        if (patched == null)
+        {
+            var result = CecilPatcher.Patch(original);
+            Log("引擎判定启动器：" + result.Launcher);
+            if (result.Status == "AlreadyPatched") { Log("限制入口已关闭，无需重复修补。"); return; }
+            if (result.Status == "NoRestriction") { Log("未发现可修补的下载限制，未修改文件。"); return; }
+            if (result.Status != "Patched" || result.Changes.Length < 1) Fail("补丁未生成有效结果。");
+            foreach (var c in result.Changes) Log("  修补点：" + c);
+            patched = result.Bytes;
+        }
+
+        EnsureBackup(path, original);
+        WriteWithRetry(path, patched, confirm);
+        Log("已写入：" + path);
+    }
+
+    // PCL2 2.99 锚点补丁：返回补丁后的完整文件字节（安全检查失败抛异常，不写任何文件）
+    static byte[] AnchorPatch(byte[] fileBytes)
+    {
         // 重置静态状态，避免跨次运行污染（bridgeType/touched 等静态字段在第一次补丁后仍持有旧模块引用）
         mod = null;
         touched.Clear();
@@ -152,43 +183,67 @@ static class PatchRunner
         bridgeLicClick = null;
         bridgeAnnounce = null;
 
-        mod = dnlib.DotNet.ModuleDefMD.Load(File.ReadAllBytes(path));
+        mod = dnlib.DotNet.ModuleDefMD.Load(fileBytes);
         string asmName = mod.Assembly != null ? mod.Assembly.Name.String : "";
         string ver = mod.Assembly != null ? mod.Assembly.Version.ToString() : "";
         Log("程序集：" + asmName + "  版本：" + ver);
         if (asmName != "Plain Craft Launcher 2") Fail("这不是 PCL2 主程序（程序集名：" + asmName + "）。");
-        if (ver != "2.99.0.0") Log("警告：当前补丁针对 2.99.0.0 验证，此版本可能不匹配；若失败会自动中止且不会写坏文件。");
+        if (ver != "2.99.0.0") Fail("锚点补丁仅适配 2.99.0.0（当前：" + ver + "）。");
 
         PatchA(); PatchB(); PatchE(); PatchC(); PatchD(); PatchF(); PatchG();
 
         foreach (var b in touched) { b.SimplifyBranches(); b.OptimizeBranches(); }
-        string tmp = Path.Combine(Path.GetTempPath(), "pcl2patch_" + Guid.NewGuid().ToString("N") + ".exe");
-        mod.Write(tmp);
-        Log("IL 重写完成，临时文件已生成。");
+        var ms = new MemoryStream();
+        mod.Write(ms);
+        Log("IL 重写完成。");
+        return ms.ToArray();
+    }
 
+    // ---------- 备份与原子写入 ----------
+    static void EnsureBackup(string path, byte[] original)
+    {
         string bak = path + ".bak";
-        if (!File.Exists(bak)) { File.Copy(path, bak); Log("已备份原文件：" + bak); }
-        else Log("备份已存在，跳过：" + bak);
+        if (File.Exists(bak)) { Log("备份已存在，跳过：" + bak); return; }
+        WriteAtomic(bak, original);
+        Log("已备份原文件：" + bak);
+    }
 
+    static void WriteAtomic(string path, byte[] bytes)
+    {
+        string dir = Path.GetDirectoryName(path);
+        string tmp = Path.Combine(dir, ".pcl2patch-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                fs.Write(bytes, 0, bytes.Length);
+                fs.Flush(true);
+            }
+            if (File.Exists(path)) File.Replace(tmp, path, null);
+            else File.Move(tmp, path);
+        }
+        finally { TryDelete(tmp); }
+    }
+
+    static void WriteWithRetry(string path, byte[] bytes, Func<string, bool> confirm)
+    {
         for (int attempt = 1; attempt <= 3; attempt++)
         {
             try
             {
-                File.Copy(tmp, path, true);
-                Log("已写入：" + path);
-                break;
+                WriteAtomic(path, bytes);
+                return;
             }
             catch (IOException)
             {
-                if (attempt == 3) { TryDelete(tmp); Fail("目标文件被占用，写入失败。请关闭 PCL2 后重试。"); }
+                if (attempt == 3) Fail("目标文件被占用，写入失败。请关闭启动器后重试。");
                 var lockers = FindLockers(path);
-                if (lockers.Count == 0 || !confirm("PCL2 正在运行，需要结束进程才能写入。是否立即结束？"))
+                if (lockers.Count == 0 || !confirm("启动器正在运行，需要结束进程才能写入。是否立即结束？"))
                     Fail("文件被占用，用户取消。");
                 foreach (var p in lockers) { try { p.Kill(); p.WaitForExit(5000); } catch { } }
                 Thread.Sleep(800);
             }
         }
-        TryDelete(tmp);
     }
 
     // ---------- 一键还原 ----------
@@ -200,37 +255,48 @@ static class PatchRunner
         if (!File.Exists(path)) Fail("文件不存在：" + path);
         string bak = path + ".bak";
         if (!File.Exists(bak)) Fail("未找到备份文件，无法还原：\r\n" + bak + "\r\n（备份在首次打补丁时自动创建）");
-        string name;
-        using (var m2 = dnlib.DotNet.ModuleDefMD.Load(File.ReadAllBytes(bak)))
-            name = m2.Assembly != null ? m2.Assembly.Name.String : "";
-        if (name != "Plain Craft Launcher 2") Fail("备份文件不是 PCL2 主程序，已中止：" + bak);
-        Log("备份校验通过：" + bak);
-        for (int attempt = 1; attempt <= 3; attempt++)
-        {
-            try
-            {
-                File.Copy(bak, path, true);
-                Log("已用备份覆盖：" + path);
-                break;
-            }
-            catch (IOException)
-            {
-                if (attempt == 3) Fail("目标文件被占用，还原失败。请关闭 PCL2 后重试。");
-                var lockers = FindLockers(path);
-                if (lockers.Count == 0 || !confirm("PCL2 正在运行，需要结束进程才能还原。是否立即结束？"))
-                    Fail("文件被占用，用户取消。");
-                foreach (var p in lockers) { try { p.Kill(); p.WaitForExit(5000); } catch { } }
-                Thread.Sleep(800);
-            }
-        }
+        byte[] bakBytes = File.ReadAllBytes(bak);
+        var info = TargetDetect.Identify(bakBytes);
+        if (info.Kind == TargetDetect.Kind.Unknown) Fail("备份文件不是受支持的启动器主程序，已中止：" + bak);
+        if (info.Kind == TargetDetect.Kind.Pcl2 && info.AsmName != "" && info.AsmName != "Plain Craft Launcher 2")
+            Fail("备份文件不是 PCL2 主程序，已中止：" + bak);
+        Log("备份校验通过（" + info.Desc + "）：" + bak);
+        WriteWithRetry(path, bakBytes, confirm);
+        Log("已用备份覆盖：" + path);
     }
 
+    // 按主模块路径匹配所有进程；Java 启动器额外匹配 -jar 命令行
     static List<Process> FindLockers(string path)
     {
         var list = new List<Process>();
-        foreach (var p in Process.GetProcessesByName("Plain Craft Launcher 2"))
+        string fileName = Path.GetFileName(path);
+        foreach (var p in Process.GetProcesses())
         {
-            try { if (string.Equals(p.MainModule.FileName, path, StringComparison.OrdinalIgnoreCase)) list.Add(p); }
+            try
+            {
+                string mp = p.MainModule.FileName;
+                if (string.Equals(mp, path, StringComparison.OrdinalIgnoreCase)) { list.Add(p); continue; }
+            }
+            catch { }
+            if (!p.ProcessName.Equals("java", StringComparison.OrdinalIgnoreCase) && !p.ProcessName.Equals("javaw", StringComparison.OrdinalIgnoreCase)) continue;
+            try
+            {
+                using (var searcher = new ManagementObjectSearcher("SELECT CommandLine FROM Win32_Process WHERE ProcessId = " + p.Id))
+                foreach (ManagementObject o in searcher.Get())
+                {
+                    string cl = o["CommandLine"] as string;
+                    if (string.IsNullOrEmpty(cl)) continue;
+                    var m = Regex.Match(cl, "(?i)(?:^|\\s)-jar\\s+(?:\"([^\"]+)\"|(\\S+))");
+                    if (!m.Success) continue;
+                    string jar = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+                    if (string.Equals(jar, path, StringComparison.OrdinalIgnoreCase) ||
+                        (!Path.IsPathRooted(jar) && string.Equals(Path.GetFileName(jar), fileName, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        list.Add(p);
+                        break;
+                    }
+                }
+            }
             catch { }
         }
         return list;
